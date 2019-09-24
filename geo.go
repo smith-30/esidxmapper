@@ -3,13 +3,20 @@ package esidxmapper
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"log"
+	"strings"
 
 	es7 "github.com/elastic/go-elasticsearch/v7"
+	pkg_err "github.com/pkg/errors"
 )
 
 var geoShapeMappingBody []byte
+
+var (
+	errInvalidRequest = errors.New("invalid request")
+	errInternal       = errors.New("internal err")
+)
 
 func init() {
 	var geoShapeMappingSrc geoShapeMapping
@@ -20,27 +27,28 @@ func init() {
 }
 
 type geoShapeMapping struct {
-	// Mappings struct {
 	Properties struct {
 		Location struct {
 			Type string `json:"type,omitempty"`
 		} `json:"location,omitempty"`
 	} `json:"properties,omitempty"`
-	// } `json:"mappings,omitempty"`
 }
 
 func SetGeoShape(es *es7.Client, idx string) error {
-	res, err := es.Info()
-	if err != nil {
-		log.Fatalf("Error getting response: %s", err)
-	}
-	fmt.Printf("%v\n", res.String())
-
-	fmt.Printf("%v\n", string(geoShapeMappingBody))
-	res, err = es.Indices.PutMapping(bytes.NewReader(geoShapeMappingBody), es.Indices.PutMapping.WithIndex(idx))
+	res, err := es.Indices.PutMapping(bytes.NewReader(geoShapeMappingBody), es.Indices.PutMapping.WithIndex(idx))
 	if err != nil {
 		log.Fatalf("PutMapping response: %s", err)
 	}
-	fmt.Printf("%v\n", res.String())
+	defer res.Body.Close()
+	if res.IsError() {
+		switch {
+		case strings.HasPrefix(res.Status(), "4"):
+			return pkg_err.Wrapf(errInvalidRequest, "resBody: %s", res.String())
+		case strings.HasPrefix(res.Status(), "5"):
+			return pkg_err.Wrapf(errInternal, "resBody: %s", res.String())
+		default:
+		}
+		return pkg_err.Wrapf(errors.New("invalid status."), "code: %s", res.Status())
+	}
 	return nil
 }
